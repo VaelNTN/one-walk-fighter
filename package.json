@@ -1,0 +1,23 @@
+{
+  "name": "one-walk-fighter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "1-Walk Fighter - Fast 1-lane rhythm martial arts brawler",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "cap:sync": "npm run build && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.6.2",
+    "@capacitor/device": "^8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/cli": "^8.6.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
+  }
+}
