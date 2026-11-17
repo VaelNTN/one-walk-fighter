@@ -1,4 +1,5 @@
 import { FighterSkin } from '../data/fighters';
+import { drawMartialFighter } from './fighterRenderer';
 
 type Side = -1 | 1;
 type EnemyKind = 'ninja' | 'brawler' | 'master';
@@ -21,7 +22,9 @@ interface FlyBody {
   vx: number;
   vy: number;
   rot: number;
+  facing: Side;
   color: string;
+  headband?: string;
   life: number;
 }
 
@@ -63,6 +66,7 @@ export class FighterStage {
   private facing: Side = 1;
   private lungePx = 0;
   private lungeTimer = 0;
+  private attackStyle: 0 | 1 = 0;
   private staggerTimer = 0;
   private shakeTimer = 0;
   private dead = false;
@@ -171,7 +175,8 @@ export class FighterStage {
 
     this.facing = side;
     this.lungePx = side * 24;
-    this.lungeTimer = 0.14;
+    this.lungeTimer = 0.16;
+    this.attackStyle = this.attackStyle === 0 ? 1 : 0;
     const range = this.getStrikeRange();
 
     let targetIdx = -1;
@@ -215,11 +220,13 @@ export class FighterStage {
       }
       this.bodies.push({
         x: cx + e.side * e.dist,
-        y: groundY - 34,
+        y: groundY - 24,
         vx: side * (260 + Math.random() * 140),
         vy: -(240 + Math.random() * 140),
         rot: 0,
+        facing: e.side === 1 ? -1 : 1,
         color: e.kind === 'master' ? '#facc15' : e.kind === 'brawler' ? '#38bdf8' : '#94a3b8',
+        headband: e.kind === 'master' ? '#dc2626' : e.kind === 'brawler' ? '#0284c7' : '#ef4444',
         life: 0,
       });
       this.enemies.splice(targetIdx, 1);
@@ -322,80 +329,6 @@ export class FighterStage {
     this.rafId = requestAnimationFrame(this.loop);
   }
 
-  private drawStickFigure(
-    x: number,
-    y: number,
-    color: string,
-    facing: Side,
-    headband?: string,
-    attacking = false,
-    hasWeapon = false
-  ): void {
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = 6;
-    ctx.lineCap = 'round';
-
-    // Head
-    ctx.beginPath();
-    ctx.arc(0, -54, 13, 0, Math.PI * 2);
-    ctx.fill();
-
-    if (headband) {
-      ctx.fillStyle = headband;
-      ctx.fillRect(-13, -60, 26, 5);
-      ctx.beginPath();
-      ctx.moveTo(-13 * facing, -58);
-      ctx.lineTo(-26 * facing, -64);
-      ctx.lineTo(-22 * facing, -54);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    // Torso
-    ctx.beginPath();
-    ctx.moveTo(0, -40);
-    ctx.lineTo(0, -12);
-    ctx.stroke();
-
-    // Legs
-    ctx.beginPath();
-    ctx.moveTo(0, -12);
-    ctx.lineTo(-12, 16);
-    ctx.moveTo(0, -12);
-    ctx.lineTo(12, 16);
-    ctx.stroke();
-
-    // Arms
-    ctx.beginPath();
-    if (attacking) {
-      ctx.moveTo(0, -34);
-      ctx.lineTo(facing * 32, -36);
-      ctx.moveTo(0, -34);
-      ctx.lineTo(-facing * 12, -22);
-    } else {
-      ctx.moveTo(0, -34);
-      ctx.lineTo(facing * 16, -24);
-      ctx.moveTo(0, -34);
-      ctx.lineTo(-facing * 14, -22);
-    }
-    ctx.stroke();
-
-    if (hasWeapon) {
-      ctx.strokeStyle = '#fde047';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(facing * 10, -28);
-      ctx.lineTo(facing * 48, attacking ? -38 : -48);
-      ctx.stroke();
-    }
-
-    ctx.restore();
-  }
-
   private draw(): void {
     const { ctx, width, height } = this;
     if (width <= 0 || height <= 0) return;
@@ -424,6 +357,11 @@ export class FighterStage {
     ctx.arc(cx, groundY - 90, 96, 0, Math.PI * 2);
     ctx.fill();
 
+    // Subtle dojo pillars
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.42)';
+    ctx.fillRect(cx - Math.min(180, width * 0.42), 0, 14, groundY + 16);
+    ctx.fillRect(cx + Math.min(180, width * 0.42) - 14, 0, 14, groundY + 16);
+
     // Strike range bars (Left & Right indicators)
     const range = this.getStrikeRange();
     for (const side of [-1, 1] as Side[]) {
@@ -449,17 +387,36 @@ export class FighterStage {
     ctx.stroke();
 
     // Tap zone hints near bottom
-    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
     ctx.font = '800 14px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('◀ TIK LINKS', width * 0.25, height - 34);
-    ctx.fillText('TIK RECHTS ▶', width * 0.75, height - 34);
+    ctx.fillText('◀ TAP LEFT', width * 0.25, height - 36);
+    ctx.fillText('TAP RIGHT ▶', width * 0.75, height - 36);
 
     // Enemies
     for (const e of this.enemies) {
       const ex = cx + e.side * e.dist;
-      const col = e.flash > 0 ? '#ffffff' : e.kind === 'master' ? '#facc15' : e.kind === 'brawler' ? '#38bdf8' : '#cbd5e1';
-      this.drawStickFigure(ex, groundY, col, e.side === 1 ? -1 : 1, e.kind === 'master' ? '#dc2626' : undefined);
+      const col =
+        e.flash > 0
+          ? '#ffffff'
+          : e.kind === 'master'
+          ? '#facc15'
+          : e.kind === 'brawler'
+          ? '#38bdf8'
+          : '#94a3b8';
+      const headband =
+        e.kind === 'master' ? '#dc2626' : e.kind === 'brawler' ? '#0284c7' : '#ef4444';
+      const belt = e.kind === 'master' ? '#111827' : '#1e293b';
+      drawMartialFighter(ctx, {
+        x: ex,
+        y: groundY,
+        bodyColor: col,
+        headbandColor: headband,
+        beltColor: belt,
+        facing: e.side === 1 ? -1 : 1,
+        pose: 'walk',
+        phase: this.clock + e.id * 0.4,
+      });
       if (e.maxHp > 1) {
         for (let h = 0; h < e.hp; h++) {
           ctx.fillStyle = e.kind === 'master' ? '#facc15' : '#38bdf8';
@@ -473,25 +430,45 @@ export class FighterStage {
     // Knocked-out flying ragdolls
     for (const b of this.bodies) {
       ctx.save();
-      ctx.globalAlpha = 1 - b.life / 0.75;
+      ctx.globalAlpha = Math.max(0, 1 - b.life / 0.75);
       ctx.translate(b.x, b.y);
       ctx.rotate(b.rot);
-      ctx.fillStyle = b.color;
-      ctx.fillRect(-8, -22, 16, 44);
+      drawMartialFighter(ctx, {
+        x: 0,
+        y: 26,
+        scale: 0.92,
+        bodyColor: b.color,
+        headbandColor: b.headband,
+        beltColor: '#0f172a',
+        facing: b.facing,
+        pose: 'ko',
+        phase: this.clock,
+      });
       ctx.restore();
     }
 
     // Player Fighter
     const playerCol = this.staggerTimer > 0 ? '#f87171' : this.skin.body;
-    this.drawStickFigure(
-      cx + this.lungePx,
-      groundY,
-      playerCol,
-      this.facing,
-      this.skin.headband,
-      this.lungeTimer > 0,
-      this.weaponHits > 0
-    );
+    const pose =
+      this.staggerTimer > 0
+        ? 'hurt'
+        : this.lungeTimer > 0
+        ? this.attackStyle === 0
+          ? 'punch'
+          : 'kick'
+        : 'idle';
+    drawMartialFighter(ctx, {
+      x: cx + this.lungePx,
+      y: groundY,
+      bodyColor: playerCol,
+      headbandColor: this.skin.headband,
+      beltColor: '#0f172a',
+      facing: this.facing,
+      pose,
+      phase: this.clock,
+      hasWeapon: this.weaponHits > 0,
+      auraColor: this.skin.aura,
+    });
 
     // Slash sparks
     for (const sp of this.sparks) {
