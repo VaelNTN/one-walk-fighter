@@ -153,16 +153,20 @@ function startHomePreview(): void {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      // Inner sunset halo
-      ctx.fillStyle = 'rgba(250, 204, 21, 0.16)';
+      // Inner twilight crimson moon halo
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.28)';
       ctx.beginPath();
-      ctx.arc(size / 2, size / 2 - 4, 38, 0, Math.PI * 2);
+      ctx.arc(size / 2, size / 2 - 6, 40, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.2)';
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2 - 6, 28, 0, Math.PI * 2);
       ctx.fill();
 
       drawMartialFighter(ctx, {
-        x: size / 2,
-        y: 92,
-        scale: 1.05,
+        x: size / 2 + 2,
+        y: 94,
+        scale: 1.08,
         bodyColor: skin.body,
         headbandColor: skin.headband,
         beltColor: '#0f172a',
@@ -170,6 +174,7 @@ function startHomePreview(): void {
         pose: 'idle',
         phase: t,
         auraColor: skin.aura,
+        archetype: 'player',
       });
     }
     homePreviewRaf = requestAnimationFrame(drawFrame);
