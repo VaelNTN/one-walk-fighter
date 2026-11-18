@@ -1,5 +1,6 @@
 import './style.css';
 import {
+  flushPendingFighterScores,
   GlobalFighterEntry,
   fetchGlobalFighterHighscores,
   submitGlobalFighterScore,
@@ -9,6 +10,7 @@ import { drawMartialFighter } from './game/fighterRenderer';
 import { FighterStage } from './game/FighterStage';
 import { soundFX } from './game/SoundFX';
 import {
+  cleanApiUrl,
   FighterState,
   loadFighterState,
   recordFighterScore,
@@ -20,13 +22,24 @@ type ScreenName = 'home' | 'options' | 'game' | 'highscores';
 type HsMode = 'global' | 'local';
 
 let state: FighterState;
+let currentScreen: ScreenName = 'home';
 let hsMode: HsMode = 'global';
 let optionsFromPlay = false;
 let stage: FighterStage | null = null;
 let hsPollInterval: number | null = null;
+let hsFetchSeq = 0;
 let homePreviewRaf: number | null = null;
 let hsHeadingTapCount = 0;
 let hsHeadingTapTimer: number | null = null;
+
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function buildApp(): void {
   const app = document.getElementById('app')!;
@@ -120,37 +133,45 @@ function startHomePreview(): void {
   if (!ctx) return;
 
   const size = 120;
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  const target = Math.round(size * dpr);
-  if (canvas.width !== target || canvas.height !== target) {
-    canvas.width = target;
-    canvas.height = target;
-  }
 
   const drawFrame = (ts: number) => {
-    const t = ts / 1000;
-    const skin = getFighterSkin(state.fighterSkin);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, size, size);
+    if (currentScreen !== 'home') {
+      homePreviewRaf = null;
+      return;
+    }
+    if (!document.hidden) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      const target = Math.round(size * dpr);
+      if (canvas.width !== target || canvas.height !== target) {
+        canvas.width = target;
+        canvas.height = target;
+      }
 
-    // Inner sunset halo
-    ctx.fillStyle = 'rgba(250, 204, 21, 0.16)';
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2 - 4, 38, 0, Math.PI * 2);
-    ctx.fill();
+      const t = ts / 1000;
+      const skin = getFighterSkin(state.fighterSkin);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    drawMartialFighter(ctx, {
-      x: size / 2,
-      y: 92,
-      scale: 1.05,
-      bodyColor: skin.body,
-      headbandColor: skin.headband,
-      beltColor: '#0f172a',
-      facing: 1,
-      pose: 'idle',
-      phase: t,
-      auraColor: skin.aura,
-    });
+      // Inner sunset halo
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.16)';
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2 - 4, 38, 0, Math.PI * 2);
+      ctx.fill();
+
+      drawMartialFighter(ctx, {
+        x: size / 2,
+        y: 92,
+        scale: 1.05,
+        bodyColor: skin.body,
+        headbandColor: skin.headband,
+        beltColor: '#0f172a',
+        facing: 1,
+        pose: 'idle',
+        phase: t,
+        auraColor: skin.aura,
+      });
+    }
     homePreviewRaf = requestAnimationFrame(drawFrame);
   };
   homePreviewRaf = requestAnimationFrame(drawFrame);
@@ -169,8 +190,14 @@ function syncSoundButton(): void {
 }
 
 function showScreen(name: ScreenName): void {
+  currentScreen = name;
   document.querySelectorAll('.screen').forEach((el) => el.classList.add('hidden'));
   document.getElementById(`screen-${name}`)?.classList.remove('hidden');
+
+  if (hsPollInterval !== null) {
+    clearInterval(hsPollInterval);
+    hsPollInterval = null;
+  }
 
   if (name === 'game') startStage();
   else stopStage();
@@ -189,11 +216,11 @@ function showScreen(name: ScreenName): void {
   }
 
   if (name === 'highscores') {
+    if (state.apiBaseUrl) {
+      flushPendingFighterScores(state.apiBaseUrl).catch(() => {});
+    }
     refreshHighscoresView();
     hsPollInterval = window.setInterval(() => refreshHighscoresView(), 12000);
-  } else if (hsPollInterval !== null) {
-    clearInterval(hsPollInterval);
-    hsPollInterval = null;
   }
 }
 
@@ -204,7 +231,7 @@ function renderOptions(): void {
   for (const s of FIGHTER_SKINS) {
     const btn = document.createElement('button');
     btn.className = `skin-card ${state.fighterSkin === s.id ? 'selected' : ''}`;
-    btn.innerHTML = `<span class="swatch" style="background:${s.headband};box-shadow:0 0 8px ${s.aura}"></span><span>${s.name}</span>`;
+    btn.innerHTML = `<span class="swatch" style="background:${s.headband};box-shadow:0 0 8px ${s.aura}"></span><span>${escapeHtml(s.name)}</span>`;
     btn.onclick = () => {
       state.fighterSkin = s.id;
       saveFighterState(state);
@@ -228,13 +255,17 @@ function startStage(): void {
           const wpn = weaponHits > 0 ? ` • ⚔️ ${weaponHits}` : '';
           document.getElementById('hud-sub')!.textContent = `❤️ ${hp} • KO: ${kills} • Combo: x${combo}${wpn}`;
         },
-        onHit: (combo) => soundFX.playHit(combo),
+        onHit: (combo, isCrit) => soundFX.playHit(combo, isCrit),
+        onBossKO: () => soundFX.playBossKO(),
         onWhiff: () => soundFX.playWhiff(),
         onHurt: () => soundFX.playHurt(),
         onGameOver: (score, kills, maxCombo) => {
+          const prevBest = state.bestScore;
           recordFighterScore(state, score, kills, maxCombo);
-          document.getElementById('gameover-text')!.textContent =
-            score >= state.bestScore ? `New Record: ${score} pts (${kills} KO)!` : `Score: ${score} pts • ${kills} KO`;
+          const isNewRecord = score > 0 && score > prevBest;
+          document.getElementById('gameover-text')!.textContent = isNewRecord
+            ? `New Record: ${score} pts (${kills} KO)!`
+            : `Score: ${score} pts • ${kills} KO`;
           document.getElementById('gameover-card')!.classList.remove('hidden');
           if (state.apiBaseUrl && score > 0) {
             submitGlobalFighterScore(state.apiBaseUrl, {
@@ -267,6 +298,7 @@ function updateHsStatusBanner(online: boolean): void {
 }
 
 async function refreshHighscoresView(): Promise<void> {
+  const seq = ++hsFetchSeq;
   const list = document.getElementById('hs-list')!;
   (document.getElementById('server-url-input') as HTMLInputElement).value = state.apiBaseUrl;
 
@@ -286,8 +318,8 @@ async function refreshHighscoresView(): Promise<void> {
           <div class="hs-left">
             <span class="hs-rank">#${i + 1}</span>
             <div>
-              <div class="hs-name">${h.playerName}</div>
-              <div class="hs-meta">${getFighterSkin(h.fighterSkin).name} • ${h.kills} KOs (Max x${h.maxCombo})</div>
+              <div class="hs-name">${escapeHtml(h.playerName)}</div>
+              <div class="hs-meta">${escapeHtml(getFighterSkin(h.fighterSkin).name)} • ${h.kills} KOs (Max x${h.maxCombo})</div>
             </div>
           </div>
           <div class="hs-score">${h.score} pts</div>
@@ -305,6 +337,7 @@ async function refreshHighscoresView(): Promise<void> {
 
   try {
     const res = await fetchGlobalFighterHighscores(state.apiBaseUrl, state.deviceId, 50);
+    if (seq !== hsFetchSeq || hsMode !== 'global' || currentScreen !== 'highscores') return;
     updateHsStatusBanner(true);
     const entries: GlobalFighterEntry[] = res.entries || [];
     if (entries.length === 0) {
@@ -316,17 +349,18 @@ async function refreshHighscoresView(): Promise<void> {
         (e) => `
         <div class="hs-row ${e.deviceId === state.deviceId ? 'me' : ''}">
           <div class="hs-left">
-            <span class="hs-rank">#${e.rank}</span>
+            <span class="hs-rank">#${Number(e.rank) || 0}</span>
             <div>
-              <div class="hs-name">${e.playerName}</div>
-              <div class="hs-meta">${getFighterSkin(e.fighterSkin).name} • ${e.kills} KOs</div>
+              <div class="hs-name">${escapeHtml(String(e.playerName || 'Sensei'))}</div>
+              <div class="hs-meta">${escapeHtml(getFighterSkin(e.fighterSkin).name)} • ${Number(e.kills) || 0} KOs</div>
             </div>
           </div>
-          <div class="hs-score">${e.score} pts</div>
+          <div class="hs-score">${Number(e.score) || 0} pts</div>
         </div>`
       )
       .join('');
   } catch {
+    if (seq !== hsFetchSeq || hsMode !== 'global' || currentScreen !== 'highscores') return;
     updateHsStatusBanner(false);
     list.innerHTML = `<p style="text-align:center;color:#fca5a5;margin-top:24px;">Offline or leaderboard unreachable. Check the Local tab!</p>`;
   }
@@ -338,6 +372,15 @@ async function init(): Promise<void> {
   soundFX.enabled = state.soundEnabled;
   buildApp();
   renderOptions();
+
+  if (state.apiBaseUrl) {
+    flushPendingFighterScores(state.apiBaseUrl).catch(() => {});
+  }
+  window.addEventListener('online', () => {
+    if (state.apiBaseUrl) {
+      flushPendingFighterScores(state.apiBaseUrl).catch(() => {});
+    }
+  });
 
   document.getElementById('btn-home-play')!.onclick = () => showScreen('game');
   document.getElementById('btn-home-options')!.onclick = () => {
@@ -376,7 +419,10 @@ async function init(): Promise<void> {
   };
   document.getElementById('btn-retry')!.onclick = () => {
     document.getElementById('gameover-card')!.classList.add('hidden');
-    stage?.resetGame();
+    if (stage) {
+      stage.resetGame();
+      stage.start();
+    }
   };
   document.getElementById('btn-go-menu')!.onclick = () => showScreen('home');
   document.getElementById('btn-go-hs')!.onclick = () => showScreen('highscores');
@@ -403,8 +449,12 @@ async function init(): Promise<void> {
     refreshHighscoresView();
   };
   document.getElementById('btn-save-server')!.onclick = () => {
-    state.apiBaseUrl = (document.getElementById('server-url-input') as HTMLInputElement).value.trim().replace(/\/+$/, '');
+    const raw = (document.getElementById('server-url-input') as HTMLInputElement).value;
+    state.apiBaseUrl = cleanApiUrl(raw);
     saveFighterState(state);
+    if (state.apiBaseUrl) {
+      flushPendingFighterScores(state.apiBaseUrl).catch(() => {});
+    }
     refreshHighscoresView();
   };
 
