@@ -122,6 +122,7 @@ export class FighterStage {
   private height = 0;
   private dpr = 1;
   private active = false;
+  private paused = false;
   private rafId: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private lastTime = 0;
@@ -144,6 +145,7 @@ export class FighterStage {
   private hurtFlashTimer = 0;
   private camX = 0;
   private dead = false;
+  private currentDojoTier = -1;
 
   private enemies: Enemy[] = [];
   private bodies: FlyBody[] = [];
@@ -157,7 +159,7 @@ export class FighterStage {
   private nextId = 1;
   private spawnTimer = 0.6;
 
-  // Cached gradients rebuilt on resize for crisp 60fps mobile rendering
+  // Cached gradients rebuilt on resize or dojo tier change for crisp 60fps mobile rendering
   private skyGrad: CanvasGradient | null = null;
   private moonGlowGrad: CanvasGradient | null = null;
   private floorSheenGrad: CanvasGradient | null = null;
@@ -207,6 +209,23 @@ export class FighterStage {
     this.skin = skin;
   }
 
+  public setPaused(p: boolean): void {
+    this.paused = p;
+    if (!p) this.lastTime = performance.now();
+  }
+
+  public isPaused(): boolean {
+    return this.paused;
+  }
+
+  public isDead(): boolean {
+    return this.dead;
+  }
+
+  private getGroundY(): number {
+    return this.height < 480 ? this.height * 0.72 : this.height * 0.64;
+  }
+
   public resetGame(): void {
     this.score = 0;
     this.kills = 0;
@@ -224,6 +243,7 @@ export class FighterStage {
     this.hurtFlashTimer = 0;
     this.camX = 0;
     this.dead = false;
+    this.paused = false;
     this.enemies = [];
     this.bodies = [];
     this.rings = [];
@@ -232,6 +252,8 @@ export class FighterStage {
     this.dust = [];
     this.popups = [];
     this.spawnTimer = 0.35;
+    this.currentDojoTier = -1;
+    this.rebuildBackdropCache();
     this.callbacks.onHudUpdate(0, 0, 0, 3, 0);
   }
 
@@ -243,7 +265,7 @@ export class FighterStage {
     }
     this.active = true;
     this.handleResize();
-    if (this.dead || (this.enemies.length === 0 && this.kills === 0)) {
+    if (this.dead || (this.enemies.length === 0 && this.kills === 0 && this.score === 0)) {
       this.resetGame();
     }
     window.addEventListener('resize', this.handleResize);
@@ -307,27 +329,61 @@ export class FighterStage {
     const { ctx, width, height } = this;
     if (width <= 0 || height <= 0) return;
     const cx = width / 2;
-    const groundY = height * 0.64;
+    const groundY = this.getGroundY();
+    const tier = Math.floor(this.kills / 25) % 4;
+    this.currentDojoTier = tier;
 
     const sky = ctx.createLinearGradient(0, -16, 0, groundY + 24);
-    sky.addColorStop(0, '#0f0718');
-    sky.addColorStop(0.35, '#3b0a1b');
-    sky.addColorStop(0.75, '#7f1d1d');
-    sky.addColorStop(1, '#c2410c');
+    if (tier === 0) {
+      sky.addColorStop(0, '#0f0718');
+      sky.addColorStop(0.35, '#3b0a1b');
+      sky.addColorStop(0.75, '#7f1d1d');
+      sky.addColorStop(1, '#c2410c');
+    } else if (tier === 1) {
+      // Midnight Sapphire Temple
+      sky.addColorStop(0, '#040818');
+      sky.addColorStop(0.35, '#0f172a');
+      sky.addColorStop(0.75, '#1e3a5f');
+      sky.addColorStop(1, '#0284c7');
+    } else if (tier === 2) {
+      // Golden Dawn Pagoda
+      sky.addColorStop(0, '#1c1026');
+      sky.addColorStop(0.35, '#581c4f');
+      sky.addColorStop(0.75, '#b45309');
+      sky.addColorStop(1, '#f59e0b');
+    } else {
+      // Blood Eclipse Shrine
+      sky.addColorStop(0, '#07030f');
+      sky.addColorStop(0.35, '#2e0836');
+      sky.addColorStop(0.75, '#6b1237');
+      sky.addColorStop(1, '#be123c');
+    }
     this.skyGrad = sky;
 
-    const moonY = groundY - Math.min(130, height * 0.22);
-    const moonR = Math.min(96, Math.max(62, width * 0.17));
+    const moonY = groundY - Math.min(125, height * 0.24);
+    const moonR = Math.min(88, Math.max(54, Math.min(width, height) * 0.16));
     const glow = ctx.createRadialGradient(cx, moonY, moonR * 0.25, cx, moonY, moonR * 2.4);
-    glow.addColorStop(0, 'rgba(254, 202, 202, 0.92)');
-    glow.addColorStop(0.38, 'rgba(239, 68, 68, 0.68)');
-    glow.addColorStop(0.65, 'rgba(220, 38, 38, 0.22)');
-    glow.addColorStop(1, 'rgba(127, 29, 29, 0)');
+    if (tier === 1) {
+      glow.addColorStop(0, 'rgba(224, 242, 254, 0.92)');
+      glow.addColorStop(0.38, 'rgba(56, 189, 248, 0.62)');
+      glow.addColorStop(0.65, 'rgba(14, 165, 233, 0.2)');
+      glow.addColorStop(1, 'rgba(15, 23, 42, 0)');
+    } else if (tier === 2) {
+      glow.addColorStop(0, 'rgba(254, 249, 195, 0.95)');
+      glow.addColorStop(0.38, 'rgba(251, 191, 36, 0.68)');
+      glow.addColorStop(0.65, 'rgba(245, 158, 11, 0.22)');
+      glow.addColorStop(1, 'rgba(120, 53, 15, 0)');
+    } else {
+      glow.addColorStop(0, 'rgba(254, 202, 202, 0.92)');
+      glow.addColorStop(0.38, 'rgba(239, 68, 68, 0.68)');
+      glow.addColorStop(0.65, 'rgba(220, 38, 38, 0.22)');
+      glow.addColorStop(1, 'rgba(127, 29, 29, 0)');
+    }
     this.moonGlowGrad = glow;
 
     const sheen = ctx.createRadialGradient(cx, groundY + 18, 10, cx, groundY + 46, Math.max(180, width * 0.55));
-    sheen.addColorStop(0, 'rgba(251, 146, 60, 0.24)');
-    sheen.addColorStop(0.5, 'rgba(220, 38, 38, 0.08)');
+    sheen.addColorStop(0, tier === 1 ? 'rgba(56, 189, 248, 0.22)' : 'rgba(251, 146, 60, 0.24)');
+    sheen.addColorStop(0.5, tier === 1 ? 'rgba(14, 165, 233, 0.08)' : 'rgba(220, 38, 38, 0.08)');
     sheen.addColorStop(1, 'rgba(15, 23, 42, 0)');
     this.floorSheenGrad = sheen;
 
@@ -344,7 +400,7 @@ export class FighterStage {
   }
 
   private onKeyDown(ev: KeyboardEvent): void {
-    if (!this.active || this.dead || ev.repeat) return;
+    if (!this.active || this.dead || this.paused || ev.repeat) return;
     const tag = (document.activeElement as HTMLElement | null)?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
@@ -358,7 +414,7 @@ export class FighterStage {
   }
 
   private onPointerDown(ev: PointerEvent): void {
-    if (!this.active || this.dead) return;
+    if (!this.active || this.dead || this.paused) return;
     if (ev.pointerType === 'mouse' && ev.button !== 0) return;
     ev.preventDefault();
     const rect = this.canvas.getBoundingClientRect();
@@ -369,8 +425,8 @@ export class FighterStage {
   }
 
   private getStrikeRange(): number {
-    const w = this.width > 0 ? this.width : 360;
-    const base = Math.min(165, Math.max(115, w * 0.32));
+    const logicalW = Math.min(this.width > 0 ? this.width : 360, 520);
+    const base = Math.min(156, Math.max(115, logicalW * 0.32));
     return this.weaponHits > 0 ? base + 55 : base;
   }
 
@@ -430,7 +486,7 @@ export class FighterStage {
   }
 
   private strike(side: Side): void {
-    if (this.dead || this.staggerTimer > 0 || this.width <= 0 || this.height <= 0) return;
+    if (this.dead || this.paused || this.staggerTimer > 0 || this.width <= 0 || this.height <= 0) return;
 
     this.facing = side;
     this.lungePx = side * 26;
@@ -438,7 +494,7 @@ export class FighterStage {
     this.attackStyle = this.attackStyle === 0 ? 1 : 0;
 
     const cx = this.width / 2;
-    const groundY = this.height * 0.64;
+    const groundY = this.getGroundY();
     const hadWeapon = this.weaponHits > 0;
     const range = this.getStrikeRange();
 
@@ -512,6 +568,12 @@ export class FighterStage {
 
     if (e.hp <= 0) {
       this.kills++;
+      const nextTier = Math.floor(this.kills / 25) % 4;
+      if (nextTier !== this.currentDojoTier) {
+        this.rebuildBackdropCache();
+        const tierNames = ['CRIMSON DOJO', 'SAPPHIRE TEMPLE', 'GOLDEN PAGODA', 'ECLIPSE SHRINE'];
+        this.spawnPopup(cx, groundY - 110, `✦ ${tierNames[nextTier]} ✦`, '#fde047', 1.25);
+      }
       if (e.kind === 'oni') {
         this.weaponHits = 12;
         this.score += 100;
@@ -557,7 +619,8 @@ export class FighterStage {
   }
 
   private spawnEnemy(): void {
-    const startDist = Math.max(this.width * 0.56, 230);
+    // Normalize spawn distance across portrait & landscape for consistent reaction timing
+    const startDist = Math.min(340, Math.max(this.width * 0.54, 230));
     const side: Side = Math.random() > 0.5 ? 1 : -1;
     const speedBase = 135 + Math.min(220, this.kills * 2.4);
     const roll = Math.random();
@@ -592,12 +655,18 @@ export class FighterStage {
     if (!this.active) return;
 
     const rawDt = (now - this.lastTime) / 1000;
-    const dt = Number.isFinite(rawDt) ? Math.max(0, Math.min(rawDt, 0.05)) : 0;
+    const dt = this.paused ? 0 : (Number.isFinite(rawDt) ? Math.max(0, Math.min(rawDt, 0.05)) : 0);
     this.lastTime = now;
     this.clock += dt;
 
     if (this.width <= 0 || this.height <= 0) {
       this.handleResize();
+      if (this.active) this.rafId = requestAnimationFrame(this.loop);
+      return;
+    }
+
+    if (this.paused) {
+      this.draw();
       if (this.active) this.rafId = requestAnimationFrame(this.loop);
       return;
     }
@@ -626,7 +695,7 @@ export class FighterStage {
       }
 
       const cx = this.width / 2;
-      const groundY = this.height * 0.64;
+      const groundY = this.getGroundY();
 
       for (let i = this.enemies.length - 1; i >= 0; i--) {
         const e = this.enemies[i];
@@ -990,18 +1059,46 @@ export class FighterStage {
     }
 
     const cx = width / 2;
-    const groundY = height * 0.64;
+    const groundY = this.getGroundY();
 
     this.drawParallaxBackdrop(cx, groundY);
     this.drawDojoFloor(cx, groundY);
     this.drawSakuraPetals();
 
-    // Tap zone hints near bottom
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.24)';
-    ctx.font = '800 13px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('◀ TAP LEFT', width * 0.25, height - 34);
-    ctx.fillText('TAP RIGHT ▶', width * 0.75, height - 34);
+    // Tap zone hints near bottom (hidden on Game Over so they never overlap gameover-card)
+    if (!this.dead) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.24)';
+      ctx.font = '800 13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('◀ TAP LEFT', width * 0.25, height - 28);
+      ctx.fillText('TAP RIGHT ▶', width * 0.75, height - 28);
+    }
+
+    // Katana Durability Bar when wielding Oni Katana
+    if (this.weaponHits > 0 && !this.dead) {
+      const barW = 128;
+      const barH = 8;
+      const bx = cx - barW / 2;
+      const by = Math.max(height < 480 ? 64 : 114, groundY - 118);
+      const frac = Math.min(1, this.weaponHits / 12);
+      ctx.save();
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+      ctx.beginPath();
+      ctx.roundRect(bx - 2, by - 2, barW + 4, barH + 4, 6);
+      ctx.fill();
+      const kGrad = ctx.createLinearGradient(bx, by, bx + barW, by);
+      kGrad.addColorStop(0, '#f59e0b');
+      kGrad.addColorStop(1, '#fef08a');
+      ctx.fillStyle = kGrad;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, barW * frac, barH, 4);
+      ctx.fill();
+      ctx.font = '800 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#fef08a';
+      ctx.fillText(`⚔ KATANA (${this.weaponHits})`, cx, by - 5);
+      ctx.restore();
+    }
 
     // Dust puffs behind fighters
     for (const d of this.dust) {

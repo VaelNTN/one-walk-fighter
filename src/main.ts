@@ -25,6 +25,7 @@ let state: FighterState;
 let currentScreen: ScreenName = 'home';
 let hsMode: HsMode = 'global';
 let optionsFromPlay = false;
+let confirmQuitArmed = false;
 let stage: FighterStage | null = null;
 let hsPollInterval: number | null = null;
 let hsFetchSeq = 0;
@@ -41,22 +42,55 @@ function escapeHtml(raw: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function renderFighterThumb(canvas: HTMLCanvasElement, skinId: number): void {
+  const size = 48;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(size * dpr);
+  canvas.height = Math.round(size * dpr);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, size, size);
+  const skin = getFighterSkin(skinId);
+  drawMartialFighter(ctx, {
+    x: size / 2,
+    y: 41,
+    scale: 0.56,
+    bodyColor: skin.body,
+    headbandColor: skin.headband,
+    beltColor: '#0f172a',
+    facing: 1,
+    pose: 'idle',
+    phase: 0.4,
+    auraColor: skin.aura,
+    archetype: 'player',
+  });
+}
+
 function buildApp(): void {
   const app = document.getElementById('app')!;
   app.innerHTML = `
     <section id="screen-home" class="screen home-screen">
-      <div class="home-hero">
-        <div class="emblem">
-          <canvas id="home-fighter-canvas" class="home-fighter-canvas"></canvas>
-        </div>
-        <h1 class="game-title">1-Walk Fighter</h1>
-        <p class="game-subtitle">Tap left or right on strike!</p>
-        <div id="home-best-pill" class="best-pill hidden"></div>
+      <div class="home-topbar">
+        <button id="btn-home-more" class="btn btn-small">✨ More Games</button>
+        <button id="btn-home-sound" class="btn btn-small" aria-label="Toggle sound">🔊</button>
       </div>
-      <div class="home-actions">
-        <button id="btn-home-play" class="btn btn-primary">Play</button>
-        <button id="btn-home-options" class="btn btn-secondary">Fighters</button>
-        <button id="btn-home-highscores" class="btn btn-secondary">Leaderboard</button>
+      <div class="home-content">
+        <div class="home-hero">
+          <div class="emblem">
+            <canvas id="home-fighter-canvas" class="home-fighter-canvas"></canvas>
+          </div>
+          <h1 class="game-title">1-Walk Fighter</h1>
+          <p class="game-subtitle">Tap left or right when enemies enter your strike zone!</p>
+          <div id="home-best-pill" class="best-pill hidden"></div>
+        </div>
+        <div class="home-actions">
+          <button id="btn-home-play" class="btn btn-primary">▶ Enter Dojo</button>
+          <div class="home-secondary-row">
+            <button id="btn-home-options" class="btn btn-secondary">🥋 Fighters</button>
+            <button id="btn-home-highscores" class="btn btn-secondary">🏆 Ranks</button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -81,10 +115,10 @@ function buildApp(): void {
 
     <section id="screen-game" class="screen game-screen hidden">
       <div class="game-top-bar">
-        <button id="btn-game-menu" class="btn btn-small">Menu</button>
+        <button id="btn-game-pause" class="btn btn-small">⏸ Pause</button>
         <div style="display:flex;gap:8px;">
-          <button id="btn-game-options" class="btn btn-small">Fighter</button>
-          <button id="btn-game-sound" class="btn btn-small">🔊</button>
+          <button id="btn-game-options" class="btn btn-small">🥋 Fighter</button>
+          <button id="btn-game-sound" class="btn btn-small" aria-label="Toggle sound">🔊</button>
         </div>
       </div>
       <div class="hud-overlay">
@@ -94,7 +128,7 @@ function buildApp(): void {
       <canvas id="game-canvas" class="game-canvas"></canvas>
       <div id="gameover-card" class="gameover-card hidden">
         <div id="gameover-text" style="font-weight:800;font-size:1.1rem;">Knockout!</div>
-        <button id="btn-retry" class="btn btn-primary" style="padding:12px;">Retry</button>
+        <button id="btn-retry" class="btn btn-primary" style="padding:12px;">↻ Retry</button>
         <div class="gameover-actions-row">
           <button id="btn-go-menu" class="btn btn-secondary" style="padding:10px;font-size:0.9rem;">Menu</button>
           <button id="btn-go-hs" class="btn btn-secondary" style="padding:10px;font-size:0.9rem;">Leaderboard</button>
@@ -122,11 +156,58 @@ function buildApp(): void {
       </div>
       <div id="hs-list" class="hs-list"></div>
     </section>
+
+    <div id="pause-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <h3 class="modal-title">⏸ Dojo Paused</h3>
+        <p class="modal-sub">Catch your breath, warrior.</p>
+        <button id="btn-pause-resume" class="btn btn-primary" style="padding:13px;">▶ Resume Fight</button>
+        <button id="btn-pause-skins" class="btn btn-secondary">🥋 Switch Fighter</button>
+        <button id="btn-pause-restart" class="btn btn-secondary">↻ Restart Bout</button>
+        <button id="btn-pause-quit" class="btn btn-danger">🚪 Quit to Menu</button>
+      </div>
+    </div>
+
+    <div id="more-games-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <h3 class="modal-title">✨ More by VaelNTN</h3>
+        <p class="modal-sub">Explore more handcrafted games from VaelNTN Studios.</p>
+        <div class="more-games-list">
+          <a class="more-game-item featured" href="https://github.com/VaelNTN/starforge-survivors/releases/latest" target="_blank" rel="noopener noreferrer">
+            <div>
+              <div class="more-game-name">⭐ Starforge Survivors</div>
+              <div class="more-game-desc">Flagship sci-fi roguelite — 6 heroes, 6 bosses & zero ads</div>
+            </div>
+            <span class="more-game-badge">FLAGSHIP</span>
+          </a>
+          <a class="more-game-item" href="https://github.com/VaelNTN/frog-parkour/releases/latest" target="_blank" rel="noopener noreferrer">
+            <div>
+              <div class="more-game-name">🐸 Frog Parkour</div>
+              <div class="more-game-desc">Tongue-grapple lilypad leap across misty ponds</div>
+            </div>
+          </a>
+          <a class="more-game-item" href="https://github.com/VaelNTN/pocket-tanks-duel/releases/latest" target="_blank" rel="noopener noreferrer">
+            <div>
+              <div class="more-game-name">💥 Matey Tanks</div>
+              <div class="more-game-desc">Artillery physics with wind & mana arsenal</div>
+            </div>
+          </a>
+          <a class="more-game-item" href="https://github.com/VaelNTN/arcade-100-hub/releases/latest" target="_blank" rel="noopener noreferrer">
+            <div>
+              <div class="more-game-name">🕹️ Arcade 100 Hub</div>
+              <div class="more-game-desc">100 instant retro mini-games in one app</div>
+            </div>
+          </a>
+        </div>
+        <button id="btn-more-close" class="btn btn-secondary">Close</button>
+      </div>
+    </div>
   `;
 }
 
 function startHomePreview(): void {
   stopHomePreview();
+  syncSoundButton();
   const canvas = document.getElementById('home-fighter-canvas') as HTMLCanvasElement | null;
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -190,12 +271,41 @@ function stopHomePreview(): void {
 }
 
 function syncSoundButton(): void {
+  const icon = state.soundEnabled ? '🔊' : '🔇';
   const btn = document.getElementById('btn-game-sound');
-  if (btn) btn.textContent = state.soundEnabled ? '🔊' : '🔇';
+  if (btn) btn.textContent = icon;
+  const homeBtn = document.getElementById('btn-home-sound');
+  if (homeBtn) homeBtn.textContent = icon;
 }
 
-function showScreen(name: ScreenName): void {
+function toggleSound(): void {
+  state.soundEnabled = !state.soundEnabled;
+  soundFX.enabled = state.soundEnabled;
+  saveFighterState(state);
+  syncSoundButton();
+}
+
+function openPauseModal(): void {
+  if (!stage || stage.isDead()) return;
+  stage.setPaused(true);
+  confirmQuitArmed = false;
+  const quitBtn = document.getElementById('btn-pause-quit');
+  if (quitBtn) quitBtn.textContent = '🚪 Quit to Menu';
+  document.getElementById('pause-modal')?.classList.remove('hidden');
+}
+
+function closePauseModal(resume = true): void {
+  document.getElementById('pause-modal')?.classList.add('hidden');
+  confirmQuitArmed = false;
+  if (resume && stage && !stage.isDead()) {
+    stage.setPaused(false);
+  }
+}
+
+function showScreen(name: ScreenName, opts?: { resumeRun?: boolean }): void {
   currentScreen = name;
+  closePauseModal(false);
+  document.getElementById('more-games-modal')?.classList.add('hidden');
   document.querySelectorAll('.screen').forEach((el) => el.classList.add('hidden'));
   document.getElementById(`screen-${name}`)?.classList.remove('hidden');
 
@@ -204,7 +314,7 @@ function showScreen(name: ScreenName): void {
     hsPollInterval = null;
   }
 
-  if (name === 'game') startStage();
+  if (name === 'game') startStage(Boolean(opts?.resumeRun));
   else stopStage();
 
   if (name === 'home') {
@@ -231,26 +341,32 @@ function showScreen(name: ScreenName): void {
 
 function renderOptions(): void {
   (document.getElementById('player-name-input') as HTMLInputElement).value = state.playerName;
+  const startBtn = document.getElementById('btn-options-start');
+  if (startBtn) {
+    startBtn.textContent = optionsFromPlay && stage && !stage.isDead() ? '▶ Resume Fight' : 'Enter Dojo';
+  }
   const grid = document.getElementById('fighter-skin-grid')!;
   grid.innerHTML = '';
   for (const s of FIGHTER_SKINS) {
     const btn = document.createElement('button');
     btn.className = `skin-card ${state.fighterSkin === s.id ? 'selected' : ''}`;
-    btn.innerHTML = `<span class="swatch" style="background:${s.headband};box-shadow:0 0 8px ${s.aura}"></span><span>${escapeHtml(s.name)}</span>`;
+    btn.innerHTML = `<canvas class="skin-thumb" width="48" height="48"></canvas><span>${escapeHtml(s.name)}</span>`;
+    renderFighterThumb(btn.querySelector('canvas')!, s.id);
     btn.onclick = () => {
       state.fighterSkin = s.id;
       saveFighterState(state);
+      stage?.setSkin(getFighterSkin(state.fighterSkin));
       renderOptions();
     };
     grid.appendChild(btn);
   }
 }
 
-function startStage(): void {
-  document.getElementById('gameover-card')!.classList.add('hidden');
+function startStage(resumeRun = false): void {
   syncSoundButton();
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
   if (!stage) {
+    document.getElementById('gameover-card')!.classList.add('hidden');
     stage = new FighterStage(
       canvas,
       { skin: getFighterSkin(state.fighterSkin) },
@@ -287,7 +403,12 @@ function startStage(): void {
     );
   } else {
     stage.setSkin(getFighterSkin(state.fighterSkin));
-    stage.resetGame();
+    if (!resumeRun || stage.isDead()) {
+      document.getElementById('gameover-card')!.classList.add('hidden');
+      stage.resetGame();
+    } else {
+      stage.setPaused(false);
+    }
   }
   stage.start();
 }
@@ -388,6 +509,18 @@ async function init(): Promise<void> {
   });
 
   document.getElementById('btn-home-play')!.onclick = () => showScreen('game');
+  document.getElementById('btn-home-sound')!.onclick = () => toggleSound();
+  document.getElementById('btn-home-more')!.onclick = () => {
+    document.getElementById('more-games-modal')?.classList.remove('hidden');
+  };
+  document.getElementById('btn-more-close')!.onclick = () => {
+    document.getElementById('more-games-modal')?.classList.add('hidden');
+  };
+  document.getElementById('more-games-modal')!.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+      document.getElementById('more-games-modal')?.classList.add('hidden');
+    }
+  });
   document.getElementById('btn-home-options')!.onclick = () => {
     optionsFromPlay = false;
     renderOptions();
@@ -395,8 +528,13 @@ async function init(): Promise<void> {
   };
   document.getElementById('btn-home-highscores')!.onclick = () => showScreen('highscores');
 
-  document.getElementById('btn-options-back')!.onclick = () => showScreen(optionsFromPlay ? 'game' : 'home');
-  document.getElementById('btn-options-start')!.onclick = () => showScreen('game');
+  document.getElementById('btn-options-back')!.onclick = () => {
+    if (optionsFromPlay) showScreen('game', { resumeRun: true });
+    else showScreen('home');
+  };
+  document.getElementById('btn-options-start')!.onclick = () => {
+    showScreen('game', { resumeRun: optionsFromPlay });
+  };
 
   const nameInput = document.getElementById('player-name-input') as HTMLInputElement;
   nameInput.addEventListener('input', (e) => {
@@ -410,18 +548,47 @@ async function init(): Promise<void> {
     saveFighterState(state);
   });
 
-  document.getElementById('btn-game-menu')!.onclick = () => showScreen('home');
+  document.getElementById('btn-game-pause')!.onclick = () => openPauseModal();
   document.getElementById('btn-game-options')!.onclick = () => {
+    optionsFromPlay = true;
+    stage?.setPaused(true);
+    renderOptions();
+    showScreen('options');
+  };
+  document.getElementById('btn-game-sound')!.onclick = () => toggleSound();
+
+  document.getElementById('btn-pause-resume')!.onclick = () => closePauseModal(true);
+  document.getElementById('btn-pause-skins')!.onclick = () => {
+    closePauseModal(false);
     optionsFromPlay = true;
     renderOptions();
     showScreen('options');
   };
-  document.getElementById('btn-game-sound')!.onclick = () => {
-    state.soundEnabled = !state.soundEnabled;
-    soundFX.enabled = state.soundEnabled;
-    saveFighterState(state);
-    syncSoundButton();
+  document.getElementById('btn-pause-restart')!.onclick = () => {
+    closePauseModal(false);
+    document.getElementById('gameover-card')!.classList.add('hidden');
+    if (stage) {
+      stage.resetGame();
+      stage.start();
+    }
   };
+  document.getElementById('btn-pause-quit')!.onclick = () => {
+    const quitBtn = document.getElementById('btn-pause-quit')!;
+    if (!confirmQuitArmed) {
+      confirmQuitArmed = true;
+      quitBtn.textContent = '⚠ Tap again to Quit';
+      return;
+    }
+    showScreen('home');
+  };
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Escape' && currentScreen === 'game' && stage && !stage.isDead()) {
+      if (stage.isPaused()) closePauseModal(true);
+      else openPauseModal();
+    }
+  });
+
   document.getElementById('btn-retry')!.onclick = () => {
     document.getElementById('gameover-card')!.classList.add('hidden');
     if (stage) {
@@ -467,3 +634,4 @@ async function init(): Promise<void> {
 }
 
 init();
+
